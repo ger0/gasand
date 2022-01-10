@@ -8,6 +8,8 @@ const unsigned SCREEN_WIDTH   = 800;
 const unsigned SCREEN_HEIGHT  = 800;
 // pixels per particle
 const int SCALE   = 4;
+const unsigned MAP_WIDTH   = SCREEN_WIDTH / SCALE;
+const unsigned MAP_HEIGHT  = SCREEN_HEIGHT / SCALE;
 
 bool isRunning    = true;
 
@@ -31,7 +33,7 @@ struct Cell {
 Type brush_state = EMPTY;
 
 // map
-Cell map[(SCREEN_WIDTH / SCALE) * (SCREEN_HEIGHT / SCALE)] = {
+Cell map[MAP_WIDTH * MAP_HEIGHT] = {
    Cell {
       .type    = Type::EMPTY,
       .colour  = SDL_Colour{0, 0, 0, 255}
@@ -39,22 +41,24 @@ Cell map[(SCREEN_WIDTH / SCALE) * (SCREEN_HEIGHT / SCALE)] = {
 };
 
 inline Cell *mapGet(int x, int y) {
-   if (x < 0 || y < 0 || 
-       x >= SCREEN_WIDTH / SCALE || 
-       y >= SCREEN_HEIGHT / SCALE) {
+   if (x >= MAP_WIDTH || y >= MAP_HEIGHT ||
+         x < 0 || y < 0) {
       return nullptr;
    }
-   return &map[x + y * (SCREEN_WIDTH / SCALE)];
+   return &map[x + y * (MAP_WIDTH)];
 }
 
 void mapPutCell(int x, int y, Cell cell) {
-   *(mapGet(x, y)) = cell;
+   if (x >= 0 && y >= 0 &&
+         x < MAP_WIDTH && y < MAP_HEIGHT) {
+      *(mapGet(x, y)) = cell;
+   }
 }
 
 void mapStateUpdate() {
    // iterating over entire map
-   for (int y = SCREEN_HEIGHT / SCALE - 1; y >= 0; y--) {
-      for (int x = 0; x < SCREEN_WIDTH / SCALE; x++) {
+   for (int y = MAP_HEIGHT - 1; y >= 0; y--) {
+      for (int x = 0; x < MAP_WIDTH; x++) {
 
          Cell *cell = mapGet(x, y);
          if (cell == nullptr) {
@@ -71,8 +75,10 @@ void mapStateUpdate() {
                if (neighbour == nullptr) {
                   break;
 
+               /*
                } else if (i == 0 && neighbour->type == WALL) {
                   break;
+               */
 
                } else {
                  neighbour = mapGet(x + (i * mov), y + 1);
@@ -127,21 +133,25 @@ void cleanUp(SDL_Window *win, SDL_Renderer *ren) {
 }
 void tryDrawing() {
    if (isMousePressed) {
-      if (brush_state == WALL) {
-         mapPutCell(mpos_x, mpos_y, 
-               Cell{WALL, SDL_Colour{150, 150, 150, 255}});
+      for (int x = mpos_x - 1; x <= mpos_x; x++) {
+         for (int y = mpos_y - 1; y <= mpos_y; y++) {
+            if (brush_state == WALL) {
+               mapPutCell(x, y, 
+                     Cell{WALL, SDL_Colour{150, 150, 150, 255}});
 
-      } else if (brush_state == SAND) {
-         mapPutCell(mpos_x, mpos_y, 
-               Cell{SAND, SDL_Colour{255, 255, 50, 255}});
+            } else if (brush_state == SAND) {
+               mapPutCell(x, y, 
+                     Cell{SAND, SDL_Colour{255, 255, 50, 255}});
 
-      } else if (brush_state == GAS) {
-         mapPutCell(mpos_x, mpos_y, 
-               Cell{GAS, SDL_Colour{50, 20, 100, 255}});
+            } else if (brush_state == GAS) {
+               mapPutCell(x, y, 
+                     Cell{GAS, SDL_Colour{50, 20, 100, 255}});
 
-      } else if (brush_state == EMPTY) {
-         mapPutCell(mpos_x, mpos_y, 
-               Cell{EMPTY, SDL_Colour{5, 0, 0, 255}});
+            } else if (brush_state == EMPTY) {
+               mapPutCell(x, y, 
+                     Cell{EMPTY, SDL_Colour{5, 0, 0, 255}});
+            }
+         }
       }
    }
 }
@@ -167,7 +177,7 @@ void handleEvents(SDL_Event *e) {
             break;
 
          case SDL_KEYDOWN:
-            printf("Scancode: 0x%02X\n", e->key.keysym.scancode);
+            //printf("Scancode: 0x%02X\n", e->key.keysym.scancode);
             if (e->key.keysym.scancode == 0x1A) {
                brush_state = WALL;
             } else if (e->key.keysym.scancode == 0x16) {
@@ -184,8 +194,8 @@ void handleEvents(SDL_Event *e) {
 }
 
 void renderMap(SDL_Window *window, SDL_Renderer *renderer) {
-   for (int y = 0; y < SCREEN_HEIGHT / SCALE; y++) {
-      for (int x = 0; x < SCREEN_HEIGHT / SCALE; x++) {
+   for (int y = 0; y < MAP_HEIGHT; y++) {
+      for (int x = 0; x < MAP_WIDTH; x++) {
          // drawing the cell
          SDL_Rect rect = {x * SCALE, y * SCALE, SCALE, SCALE};
 
