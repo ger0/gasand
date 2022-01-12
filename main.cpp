@@ -1,75 +1,89 @@
 #include <SDL2/SDL.h>
 #include <cstdio>
+
+#include <errno.h>
+#include <unistd.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <fcntl.h>
+
 #include <ctime>
+#include <vector>
 
-typedef unsigned char byte;
+#include "shared.hpp"
 
-const unsigned SCREEN_WIDTH   = 800;
-const unsigned SCREEN_HEIGHT  = 800;
-// pixels per particle
-const int SCALE   = 4;
-const unsigned MAP_WIDTH   = SCREEN_WIDTH / SCALE;
-const unsigned MAP_HEIGHT  = SCREEN_HEIGHT / SCALE;
-
+// game state
 bool isRunning    = true;
 
-bool isMousePressed  = false;
-int mpos_x = 0, mpos_y = 0;
+// descriptors for clients
+std::vector<int> clients;
 
-// ----------- data ------------
-enum Type {
-   EMPTY = 0,
-   WALL  = 1,
-   SAND  = 2,
-   GAS   = 3,
-};
+// map state to send
+Type state[MAP_WIDTH * MAP_HEIGHT] = {EMPTY};
 
-struct Cell {
-   Type        type     = Type::EMPTY;
-   SDL_Colour  colour   = SDL_Colour{0, 0, 0, 255};
-};
-// -----------------------------
-
-Type brush_state = EMPTY;
-
-// map
-Cell map[MAP_WIDTH * MAP_HEIGHT] = {
-   Cell {
-      .type    = Type::EMPTY,
-      .colour  = SDL_Colour{0, 0, 0, 255}
+void pushToState(unsigned *arr, unsigned &max_iter) {
+   Type type = EMPTY;
+   for (unsigned i = 0; i < max_iter; i++) {
+      if (i >= MAX_SIZE) {
+         printf("ERROR DURING A PUSH_TO_STATE: pushing invalid index - %u \n", i);
+      } else { 
+         // set type
+         if (i == 0)
+            type = (Type)arr[i];
+         else
+            state[arr[i]] = type;
+      }
    }
-};
+}
 
-inline Cell *mapGet(int x, int y) {
+void readPacket(Packet &packet, int fd) {
+   if (packet.opcode == UPDATE) {
+      // list of updated cells
+      unsigned max_iter = packet.size / sizeof(unsigned);
+      pushToState(packet.payload.list, max_iter);
+
+   } else if (packet.opcode == TERMINATE) {
+      for (auto it = clients.begin(); it != clients.end(); ) {
+         if (*it == fd)
+            clients.erase(it);
+      }
+      close(fd);
+   }
+}
+
+Packet preparePacket(Opcode opcode) {
+   Packet packet;
+   packet.opcode = opcode;
+   if (opcode == DISPLAY) {
+      memcpy(packet.payload.map, state, MAX_SIZE);
+   }
+   return packet;
+}
+
+inline Type *stateGet(int x, int y) {
    if (x >= MAP_WIDTH || y >= MAP_HEIGHT ||
          x < 0 || y < 0) {
       return nullptr;
    }
-   return &map[x + y * (MAP_WIDTH)];
+   return &state[x + y * (MAP_WIDTH)];
 }
 
-void mapPutCell(int x, int y, Cell cell) {
-   if (x >= 0 && y >= 0 &&
-         x < MAP_WIDTH && y < MAP_HEIGHT) {
-      *(mapGet(x, y)) = cell;
-   }
-}
 
 void mapStateUpdate() {
    // iterating over entire map
    for (int y = MAP_HEIGHT - 1; y >= 0; y--) {
       for (int x = 0; x < MAP_WIDTH; x++) {
 
-         Cell *cell = mapGet(x, y);
+         Type *cell = stateGet(x, y);
          if (cell == nullptr) {
             printf("ERROR DURING UPDATING: WRONG ID\n");
          }
 
          // update sand gravity
-         if (cell->type == SAND) {
+         if (*cell == SAND) {
 
             int mov = rand() % 3 - 1;
-            Cell *neighbour = mapGet(x, y + 1);
+            Type *neighbour = stateGet(x, y + 1);
 
             for (unsigned i = 0; i < 2; i++) {
                if (neighbour == nullptr) {
@@ -81,43 +95,43 @@ void mapStateUpdate() {
                */
 
                } else {
-                 neighbour = mapGet(x + (i * mov), y + 1);
+                 neighbour = stateGet(x + (i * mov), y + 1);
                }
 
-               if (neighbour != nullptr && neighbour->type == EMPTY) {
+               if (neighbour != nullptr && *neighbour == EMPTY) {
                   *neighbour = *cell;
-                  *cell = Cell();
+                  *cell = EMPTY;
                }
             }
          }
          // update gas state
-         else if (cell->type == GAS) {
+         else if (*cell == GAS) {
 
             int x_ran = rand() % 3 - 1;
             int y_ran = rand() % 3 - 1;
 
-            Cell *neighbour = mapGet(x, y - 1);
+            Type *neighbour = stateGet(x, y - 1);
 
             if (neighbour == nullptr) {
                continue; 
 
-            } else if (neighbour->type == SAND) {
-               Cell temp = *neighbour;
+            } else if (*neighbour == SAND) {
+               Type temp = *neighbour;
 
                *neighbour = *cell;
                *cell      = temp;
 
                continue;
 
-            } else if (neighbour->type == WALL && y_ran < 0) {
+            } else if (*neighbour == WALL && y_ran < 0) {
                continue;
             }
 
-            neighbour = mapGet(x + x_ran, y + y_ran);
+            neighbour = stateGet(x + x_ran, y + y_ran);
 
-            if (neighbour != nullptr && neighbour->type == EMPTY) {
+            if (neighbour != nullptr && *neighbour == EMPTY) {
                *neighbour = *cell;
-               *cell = Cell();
+               *cell = EMPTY; 
             }
          }
       }
@@ -131,64 +145,12 @@ void cleanUp(SDL_Window *win, SDL_Renderer *ren) {
 
    printf("Exiting the game...\n");
 }
-void tryDrawing() {
-   if (isMousePressed) {
-      for (int x = mpos_x - 1; x <= mpos_x; x++) {
-         for (int y = mpos_y - 1; y <= mpos_y; y++) {
-            if (brush_state == WALL) {
-               mapPutCell(x, y, 
-                     Cell{WALL, SDL_Colour{150, 150, 150, 255}});
-
-            } else if (brush_state == SAND) {
-               mapPutCell(x, y, 
-                     Cell{SAND, SDL_Colour{255, 255, 50, 255}});
-
-            } else if (brush_state == GAS) {
-               mapPutCell(x, y, 
-                     Cell{GAS, SDL_Colour{50, 20, 100, 255}});
-
-            } else if (brush_state == EMPTY) {
-               mapPutCell(x, y, 
-                     Cell{EMPTY, SDL_Colour{5, 0, 0, 255}});
-            }
-         }
-      }
-   }
-}
-
 void handleEvents(SDL_Event *e) {
    while (SDL_PollEvent(e) > 0) {
       switch(e->type) {
          case SDL_QUIT:
             isRunning = false;
             break;
-
-         case SDL_MOUSEBUTTONDOWN:
-            isMousePressed = true;
-         case SDL_MOUSEMOTION:
-            mpos_x = e->motion.x / SCALE;
-            mpos_y = e->motion.y / SCALE;
-            tryDrawing();
-            //printf("Mouse moved to (%d, %d)\n", mpos_x, mpos_y);
-            break;
-
-         case SDL_MOUSEBUTTONUP:
-            isMousePressed = false;
-            break;
-
-         case SDL_KEYDOWN:
-            //printf("Scancode: 0x%02X\n", e->key.keysym.scancode);
-            if (e->key.keysym.scancode == 0x1A) {
-               brush_state = WALL;
-            } else if (e->key.keysym.scancode == 0x16) {
-               brush_state = SAND;
-            } else if (e->key.keysym.scancode == 0x0A) {
-               brush_state = GAS;
-            } else {
-               brush_state = EMPTY;
-            }
-            break;
-
       }
    }
 }
@@ -198,16 +160,57 @@ void renderMap(SDL_Window *window, SDL_Renderer *renderer) {
       for (int x = 0; x < MAP_WIDTH; x++) {
          // drawing the cell
          SDL_Rect rect = {x * SCALE, y * SCALE, SCALE, SCALE};
+         
+         SDL_Colour col;
+         Type *type = stateGet(x, y);
 
-         const SDL_Colour *col = &mapGet(x, y)->colour;
-         SDL_SetRenderDrawColor(renderer, col->r, col->g, col->b, col->a);
+         if (*type == EMPTY) {
+            col = SDL_Colour{0, 0, 0, 255};
+
+         } else if (*type == WALL) {
+            col = SDL_Colour{100, 100, 100, 255};
+
+         } else if (*type == SAND) {
+            col = SDL_Colour{255, 255, 50, 255};
+
+         } else if (*type == GAS) {
+            col = SDL_Colour{50, 20, 100, 255};
+
+         // debug
+         } else {
+            col = SDL_Colour{0, 255, 0, 255};
+         }
+         SDL_SetRenderDrawColor(renderer, col.r, col.g, col.b, col.a);
          SDL_RenderFillRect(renderer, &rect);
       }
    }
    SDL_RenderPresent(renderer);
 }
 
-int main() {
+int main(int argc, char* argv[]) {
+   if (argc != 2) {
+      printf("Usage: %s <port>", argv[0]);
+      return -11;
+   }
+   sockaddr_in localAddress{
+      .sin_family = AF_INET,
+      .sin_port   = htons(atoi(argv[1])),
+      .sin_addr   = {htonl(INADDR_ANY)}
+   };
+
+   int servSock = socket(PF_INET, SOCK_STREAM, 0);
+
+   int res = bind(servSock, (sockaddr*)&localAddress, sizeof(localAddress));
+   if (res) {
+      printf("Bind failed!\n");
+      return -12;
+   }
+   
+   listen(servSock, 4);
+   
+   // no block
+   fcntl(servSock, F_SETFL, fcntl(servSock, F_GETFL) | O_NONBLOCK);
+
    srand(time(NULL));
    SDL_Window     *window;
    SDL_Renderer   *renderer;
@@ -242,18 +245,46 @@ int main() {
       return -3;
    }
       
+   int clientSock;
+
    SDL_Event event;
    // game loop
+   Packet packet;
+
    while (isRunning) {
+      // trying to accept a new client
+      clientSock = accept(servSock, nullptr, nullptr);
+      if (clientSock != -1) {
+         fcntl(clientSock, F_SETFL, fcntl(clientSock, F_GETFL) | O_NONBLOCK);
+         clients.push_back(clientSock);
+         printf("Accepted a new connection\n");
+      }
+
+      // read from clients
+      for (int sock : clients) {
+         int res = read(sock, &packet, sizeof(Packet));
+         if (res > 0)
+            readPacket(packet, sock);
+      }
+
       handleEvents(&event);
-      tryDrawing();
       mapStateUpdate();
+
+      // sending a state of a map
+      packet = preparePacket(DISPLAY);
+      for (int sock : clients) {
+         write(sock, &packet, sizeof(Packet));
+      }
+      // debug
       renderMap(window, renderer);
-      // todo sync
+
+      // TODO: tickrate 
       SDL_Delay(16);
+   }
+   for (int sock : clients) {
+      close(sock);
    }
    // clean up 
    cleanUp(window, renderer);
    return 0;
 }
-
