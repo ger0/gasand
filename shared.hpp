@@ -1,22 +1,19 @@
 #pragma once
+#include <cstdint>
 
-typedef unsigned char byte;
+using byte = uint8_t;
 
-const unsigned SCREEN_WIDTH   = 800;
-const unsigned SCREEN_HEIGHT  = 800;
+constexpr unsigned SCREEN_WIDTH   = 800;
+constexpr unsigned SCREEN_HEIGHT  = 800;
 // pixels per particle
-const int SCALE   = 4;
-const unsigned MAP_WIDTH   = SCREEN_WIDTH / SCALE;
-const unsigned MAP_HEIGHT  = SCREEN_HEIGHT / SCALE;
+constexpr int SCALE   = 4;
+constexpr unsigned MAP_WIDTH   = SCREEN_WIDTH / SCALE;
+constexpr unsigned MAP_HEIGHT  = SCREEN_HEIGHT / SCALE;
 
-const unsigned MAX_SIZE       = MAP_WIDTH * MAP_HEIGHT;
-const unsigned MAX_LIST_SIZE  = (MAX_SIZE / sizeof(unsigned)) - 1;
+constexpr unsigned MAX_SIZE       = MAP_WIDTH * MAP_HEIGHT;
+constexpr unsigned MAX_LIST_SIZE  = (MAX_SIZE / sizeof(unsigned)) - 1;
 
 // opcodes
-// chec otrzymania konfiguracji 
-// wysylanie checi zakonczenia dzialania
-// wysylanie zmian do serwera
-// wysylanie stanu mapy
 enum Opcode : byte {
    CONFIGURE   = 1,
    TERMINATE   = 10,

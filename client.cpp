@@ -1,6 +1,7 @@
 #include <SDL2/SDL.h>
 #include <cstdio>
 #include <ctime>
+#include <cassert>
 
 #include <unistd.h>
 #include <netdb.h>
@@ -9,23 +10,24 @@
 
 #include "shared.hpp"
 
-bool isRunning    = true;
+bool isRunning = true;
 
+// mouse brush
+Type brush_state = EMPTY;
 bool isMousePressed  = false;
-int mpos_x = 0, mpos_y = 0;
+struct {int x = 0; int y = 0;} mousePos;
 
+// list of updated cells sent to server
 std::vector<unsigned> updatedCells;
 
-Type brush_state = EMPTY;
-
-// stan mapy odbierany od serwera
+// map state received from server 
 Type inState[MAP_WIDTH * MAP_HEIGHT] = {EMPTY};
 
 inline unsigned getId(int x, int y) {
    return unsigned(x) + unsigned(y * MAP_HEIGHT);
 }
 
-void readPacket(Packet packet) {
+void readPacket(Packet &packet) {
    if (packet.opcode == DISPLAY) {
       memcpy(inState, packet.payload.map, MAX_SIZE);
    }
@@ -59,18 +61,10 @@ void statePutCell(int &x, int &y) {
    }
 }
 
-void cleanUp(SDL_Window *win, SDL_Renderer *ren) {
-   SDL_DestroyWindow(win);
-   SDL_DestroyRenderer(ren);
-   SDL_Quit();
-
-   printf("Exiting the game...\n");
-}
-
 void tryDrawing() {
    if (isMousePressed) {
-      for (int x = mpos_x - 1; x <= mpos_x; x++) {
-         for (int y = mpos_y - 1; y <= mpos_y; y++) {
+      for (int x = mousePos.x - 1; x <= mousePos.x; x++) {
+         for (int y = mousePos.y - 1; y <= mousePos.y; y++) {
             statePutCell(x, y);
          }
       }
@@ -87,10 +81,10 @@ void handleEvents(SDL_Event *e) {
          case SDL_MOUSEBUTTONDOWN:
             isMousePressed = true;
          case SDL_MOUSEMOTION:
-            mpos_x = e->motion.x / SCALE;
-            mpos_y = e->motion.y / SCALE;
+            mousePos.x = e->motion.x / SCALE;
+            mousePos.y = e->motion.y / SCALE;
             tryDrawing();
-            //printf("Mouse moved to (%d, %d)\n", mpos_x, mpos_y);
+            //printf("Mouse moved to (%d, %d)\n", mousePos.x, mousePos.y);
             break;
 
          case SDL_MOUSEBUTTONUP:
@@ -154,10 +148,45 @@ void renderMap(SDL_Window *window, SDL_Renderer *renderer) {
    SDL_RenderPresent(renderer);
 }
 
+// RAII
+template<typename T, auto Destructor>
+struct Scope_Handle {
+   T* ptr;
+   Scope_Handle() {
+      ptr = nullptr;
+   }
+   Scope_Handle(Scope_Handle&& rhs) {
+      this->ptr = nullptr;
+      *this = move(rhs);
+   }
+   ~Scope_Handle() {
+      reset();
+   }
+   Scope_Handle& operator=(T* rhs) {
+      assert(ptr == nullptr);
+      ptr = rhs;
+      return *this;
+   }
+   Scope_Handle& operator=(Scope_Handle&& rhs) {
+      assert(ptr == nullptr);
+      ptr = rhs.ptr;
+      rhs.ptr = nullptr;
+      return *this;
+   }
+   void reset() {
+      if (ptr != nullptr) {
+         Destructor(ptr);
+         ptr = nullptr;
+      }
+   }
+   operator T*()    const { return ptr; }
+   T* operator->()  const { return ptr; }
+};
+
 int main(int argc, char* argv[]) {
    if (argc != 3) {
       printf("Incorrect usage, please input address and port:\n");
-      printf("gasand <address> <port>\n");
+      printf("%s <address> <port>\n", argv[0]);
       return -10;
    }
 
@@ -176,12 +205,10 @@ int main(int argc, char* argv[]) {
       printf("Failed to connect\n");
       return -2;
    }
-
    freeaddrinfo(resolved);
 
-   srand(time(NULL));
-   SDL_Window     *window;
-   SDL_Renderer   *renderer;
+   Scope_Handle<SDL_Window,   SDL_DestroyWindow>   window;
+   Scope_Handle<SDL_Renderer, SDL_DestroyRenderer> renderer;
    SDL_Surface    *window_surface;
 
    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
@@ -237,7 +264,8 @@ int main(int argc, char* argv[]) {
    // close socket
    packet = preparePacket(TERMINATE);
    write(sock, &packet, sizeof(Packet));
+   close(sock);
+   SDL_Quit();
    // clean up 
-   cleanUp(window, renderer);
    return 0;
 }

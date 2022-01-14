@@ -19,7 +19,7 @@ bool isRunning    = true;
 std::vector<int> clients;
 
 // map state to send
-Type state[MAP_WIDTH * MAP_HEIGHT] = {EMPTY};
+Type state[MAP_WIDTH * MAP_HEIGHT] = {};
 
 void pushToState(unsigned *arr, unsigned &max_iter) {
    Type type = EMPTY;
@@ -82,56 +82,45 @@ void mapStateUpdate() {
          // update sand gravity
          if (*cell == SAND) {
 
+            // choose random direction
             int mov = rand() % 3 - 1;
             Type *neighbour = stateGet(x, y + 1);
 
             for (unsigned i = 0; i < 2; i++) {
-               if (neighbour == nullptr) {
-                  break;
+               if (neighbour != nullptr) {
+                  neighbour = stateGet(x + (i * mov), y + 1);
 
-               /*
-               } else if (i == 0 && neighbour->type == WALL) {
-                  break;
-               */
-
-               } else {
-                 neighbour = stateGet(x + (i * mov), y + 1);
-               }
-
-               if (neighbour != nullptr && *neighbour == EMPTY) {
-                  *neighbour = *cell;
-                  *cell = EMPTY;
+                  if (neighbour != nullptr && *neighbour == EMPTY) {
+                     *neighbour = *cell;
+                     *cell = EMPTY;
+                  }
                }
             }
          }
-         // update gas state
+         // update gas state TODO: change logic
          else if (*cell == GAS) {
 
+            // random direction
             int x_ran = rand() % 3 - 1;
             int y_ran = rand() % 3 - 1;
 
             Type *neighbour = stateGet(x, y - 1);
 
-            if (neighbour == nullptr) {
-               continue; 
+            if (neighbour != nullptr) {
+               if (*neighbour == SAND) {
+                  Type temp = *neighbour;
 
-            } else if (*neighbour == SAND) {
-               Type temp = *neighbour;
+                  *neighbour = *cell;
+                  *cell      = temp;
 
-               *neighbour = *cell;
-               *cell      = temp;
+               } else if (!(*neighbour == WALL && y_ran < 0)) {
+                  neighbour = stateGet(x + x_ran, y + y_ran);
 
-               continue;
-
-            } else if (*neighbour == WALL && y_ran < 0) {
-               continue;
-            }
-
-            neighbour = stateGet(x + x_ran, y + y_ran);
-
-            if (neighbour != nullptr && *neighbour == EMPTY) {
-               *neighbour = *cell;
-               *cell = EMPTY; 
+                  if (neighbour != nullptr && *neighbour == EMPTY) {
+                     *neighbour = *cell;
+                     *cell = EMPTY; 
+                  }
+               }
             }
          }
       }
