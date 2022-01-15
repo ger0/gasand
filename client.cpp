@@ -3,14 +3,18 @@
 #include <ctime>
 #include <cassert>
 
+#include <fcntl.h>
+
 #include <unistd.h>
 #include <netdb.h>
-#include <fcntl.h>
 #include <vector>
 
 #include "shared.hpp"
 
 bool isRunning = true;
+
+// socket
+int sock;
 
 // mouse brush
 Type brush_state = EMPTY;
@@ -30,6 +34,10 @@ inline unsigned getId(int x, int y) {
 void readPacket(Packet &packet) {
    if (packet.opcode == DISPLAY) {
       memcpy(inState, packet.payload.map, MAX_SIZE);
+
+   } else if (packet.opcode == TERMINATE) {
+      printf("Server closed connection...\n");
+      isRunning = false; 
    }
 }
 
@@ -93,12 +101,21 @@ void handleEvents(SDL_Event *e) {
 
          case SDL_KEYDOWN:
             //printf("Scancode: 0x%02X\n", e->key.keysym.scancode);
+            
+            // W KEY
             if (e->key.keysym.scancode == 0x1A) {
                brush_state = WALL;
+            // S KEY
             } else if (e->key.keysym.scancode == 0x16) {
                brush_state = SAND;
+            // G KEY
             } else if (e->key.keysym.scancode == 0x0A) {
                brush_state = GAS;
+            // SPACEBAR KEY
+            } else if (e->key.keysym.scancode == 0x2C) {
+               Packet packet = preparePacket(CLEAR);
+               write(sock, &packet, sizeof(Packet));
+
             } else {
                brush_state = EMPTY;
             }
@@ -117,6 +134,7 @@ inline Type *stateGet(int x, int y) {
 }
 
 void renderMap(SDL_Window *window, SDL_Renderer *renderer) {
+   SDL_RenderClear(renderer);
    for (int y = 0; y < MAP_HEIGHT; y++) {
       for (int x = 0; x < MAP_WIDTH; x++) {
          // drawing the cell
@@ -200,11 +218,13 @@ int main(int argc, char* argv[]) {
       return -1;
    }
 
-   int sock = socket(resolved->ai_family, resolved->ai_socktype, resolved->ai_protocol);
+   sock = socket(resolved->ai_family, resolved->ai_socktype, resolved->ai_protocol);
    if (connect(sock, resolved->ai_addr, resolved->ai_addrlen)) {
       printf("Failed to connect\n");
       return -2;
    }
+   fcntl(sock, F_SETFL, fcntl(sock, F_GETFL) | O_NONBLOCK);
+
    freeaddrinfo(resolved);
 
    Scope_Handle<SDL_Window,   SDL_DestroyWindow>   window;
@@ -246,25 +266,27 @@ int main(int argc, char* argv[]) {
    while (isRunning) {
       // handle events
       handleEvents(&event);
-      
-      // again...
+
       tryDrawing();
+
       // try to send updates
       if (updatedCells.size() > 0) { 
          packet = preparePacket(UPDATE);
          write(sock, &packet, sizeof(Packet));
          updatedCells.clear();
       }
+
       // read a new state
-      read(sock, &packet, sizeof(Packet));
-      readPacket(packet);
+      while (read(sock, &packet, sizeof(Packet)) > 0) {
+         readPacket(packet);
+      }
+
       renderMap(window, renderer);
       // todo sync
    }
    // close socket
    packet = preparePacket(TERMINATE);
    write(sock, &packet, sizeof(Packet));
-   close(sock);
    SDL_Quit();
    // clean up 
    return 0;

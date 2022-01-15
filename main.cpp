@@ -1,5 +1,6 @@
-#include <SDL2/SDL.h>
 #include <cstdio>
+#include <cstring>
+#include <ctime>
 
 #include <errno.h>
 #include <unistd.h>
@@ -7,13 +8,22 @@
 #include <sys/socket.h>
 #include <fcntl.h>
 
-#include <ctime>
 #include <vector>
+#include <algorithm>
+
+#include <csignal>
 
 #include "shared.hpp"
 
+constexpr double TICK_RATE = 60;
+
+// period in microseconds
+constexpr double PERIOD = SEC2USEC / TICK_RATE;
+
 // game state
 bool isRunning    = true;
+// server socket
+int servSock;
 
 // descriptors for clients
 std::vector<int> clients;
@@ -30,8 +40,9 @@ void pushToState(unsigned *arr, unsigned &max_iter) {
          // set type
          if (i == 0)
             type = (Type)arr[i];
-         else
+         else {
             state[arr[i]] = type;
+         }
       }
    }
 }
@@ -43,11 +54,11 @@ void readPacket(Packet &packet, int fd) {
       pushToState(packet.payload.list, max_iter);
 
    } else if (packet.opcode == TERMINATE) {
-      for (auto it = clients.begin(); it != clients.end(); ) {
-         if (*it == fd)
-            clients.erase(it);
-      }
-      close(fd);
+      clients.erase(std::remove(clients.begin(), clients.end(), fd), clients.end());
+
+   } else if (packet.opcode == CLEAR) {
+      for (unsigned i = 0; i < MAX_SIZE; i++)
+         state[i] = EMPTY;
    }
 }
 
@@ -67,7 +78,6 @@ inline Type *stateGet(int x, int y) {
    }
    return &state[x + y * (MAP_WIDTH)];
 }
-
 
 void mapStateUpdate() {
    // iterating over entire map
@@ -127,120 +137,54 @@ void mapStateUpdate() {
    }
 }
 
-void cleanUp(SDL_Window *win, SDL_Renderer *ren) {
-   SDL_DestroyWindow(win);
-   SDL_DestroyRenderer(ren);
-   SDL_Quit();
+void handle_sigint(int sig) {
+   isRunning = false;
 
-   printf("Exiting the game...\n");
-}
-void handleEvents(SDL_Event *e) {
-   while (SDL_PollEvent(e) > 0) {
-      switch(e->type) {
-         case SDL_QUIT:
-            isRunning = false;
-            break;
-      }
+   Packet packet = preparePacket(TERMINATE);
+   for (int sock : clients) {
+      write(sock, &packet, sizeof(Packet));
+      close(sock);
    }
-}
-
-void renderMap(SDL_Window *window, SDL_Renderer *renderer) {
-   for (int y = 0; y < MAP_HEIGHT; y++) {
-      for (int x = 0; x < MAP_WIDTH; x++) {
-         // drawing the cell
-         SDL_Rect rect = {x * SCALE, y * SCALE, SCALE, SCALE};
-         
-         SDL_Colour col;
-         Type *type = stateGet(x, y);
-
-         if (*type == EMPTY) {
-            col = SDL_Colour{0, 0, 0, 255};
-
-         } else if (*type == WALL) {
-            col = SDL_Colour{100, 100, 100, 255};
-
-         } else if (*type == SAND) {
-            col = SDL_Colour{255, 255, 50, 255};
-
-         } else if (*type == GAS) {
-            col = SDL_Colour{50, 20, 100, 255};
-
-         // debug
-         } else {
-            col = SDL_Colour{0, 255, 0, 255};
-         }
-         SDL_SetRenderDrawColor(renderer, col.r, col.g, col.b, col.a);
-         SDL_RenderFillRect(renderer, &rect);
-      }
-   }
-   SDL_RenderPresent(renderer);
+   printf("Closing server...\n");
+   close(servSock);
 }
 
 int main(int argc, char* argv[]) {
+   signal(SIGINT, handle_sigint);
    if (argc != 2) {
       printf("Usage: %s <port>", argv[0]);
       return -11;
    }
-   sockaddr_in localAddress{
+   sockaddr_in localAddress {
       .sin_family = AF_INET,
       .sin_port   = htons(atoi(argv[1])),
       .sin_addr   = {htonl(INADDR_ANY)}
    };
 
-   int servSock = socket(PF_INET, SOCK_STREAM, 0);
+   servSock = socket(PF_INET, SOCK_STREAM, 0);
 
    int res = bind(servSock, (sockaddr*)&localAddress, sizeof(localAddress));
    if (res) {
       printf("Bind failed!\n");
       return -12;
    }
-   
    listen(servSock, 4);
    
    // no block
    fcntl(servSock, F_SETFL, fcntl(servSock, F_GETFL) | O_NONBLOCK);
 
    srand(time(NULL));
-   SDL_Window     *window;
-   SDL_Renderer   *renderer;
-   SDL_Surface    *window_surface;
-
-   if (SDL_Init(SDL_INIT_VIDEO) < 0) {
-      printf("Failed to initialize the SDL2 library\n");
-      return -1;
-   }
-
-   window = SDL_CreateWindow(
-         "gasand",
-         SDL_WINDOWPOS_CENTERED,
-         SDL_WINDOWPOS_CENTERED,
-         SCREEN_WIDTH, SCREEN_HEIGHT,
-         0
-   );
-   if (!window) {
-      printf("Failed to create window\n");
-      return -2;
-   }
-
-   renderer = SDL_CreateRenderer(window, -1, 0);
-   if (renderer) {
-      SDL_SetRenderDrawColor(renderer, 38, 38, 38, 255);
-         printf("Created renderer\n");
-   }
-
-   window_surface = SDL_GetWindowSurface(window);
-   if (!window_surface) {
-      printf("Failed to create window surface");
-      return -3;
-   }
       
    int clientSock;
 
-   SDL_Event event;
    // game loop
    Packet packet;
+   clock_t timePoint = clock();
+   double  deltaTime = 0.0;
 
    while (isRunning) {
+      timePoint = clock();
+
       // trying to accept a new client
       clientSock = accept(servSock, nullptr, nullptr);
       if (clientSock != -1) {
@@ -251,12 +195,10 @@ int main(int argc, char* argv[]) {
 
       // read from clients
       for (int sock : clients) {
-         int res = read(sock, &packet, sizeof(Packet));
-         if (res > 0)
+         while (read(sock, &packet, sizeof(Packet)) > 0) {
             readPacket(packet, sock);
+         }
       }
-
-      handleEvents(&event);
       mapStateUpdate();
 
       // sending a state of a map
@@ -264,16 +206,16 @@ int main(int argc, char* argv[]) {
       for (int sock : clients) {
          write(sock, &packet, sizeof(Packet));
       }
-      // debug
-      renderMap(window, renderer);
 
-      // TODO: tickrate 
-      SDL_Delay(16);
-   }
-   for (int sock : clients) {
-      close(sock);
+      // tick
+      timePoint = clock() - timePoint;
+      deltaTime = PERIOD - (double)timePoint * SEC2USEC / CLOCKS_PER_SEC;
+      if (deltaTime > 0.0) {
+         usleep(deltaTime);
+      } else {
+         printf("SERVER LAGGING BEHIND: %f\n", -deltaTime);
+      }
    }
    // clean up 
-   cleanUp(window, renderer);
    return 0;
 }

@@ -3,6 +3,8 @@
 
 using byte = uint8_t;
 
+constexpr double SEC2USEC  = 1'000'000;
+
 constexpr unsigned SCREEN_WIDTH   = 800;
 constexpr unsigned SCREEN_HEIGHT  = 800;
 // pixels per particle
@@ -15,10 +17,11 @@ constexpr unsigned MAX_LIST_SIZE  = (MAX_SIZE / sizeof(unsigned)) - 1;
 
 // opcodes
 enum Opcode : byte {
-   CONFIGURE   = 1,
+//   CONFIGURE   = 1,
    TERMINATE   = 10,
    UPDATE      = 20,
-   DISPLAY     = 30
+   DISPLAY     = 30,
+   CLEAR       = 40
 };
 
 enum Type : byte {
