@@ -4,8 +4,11 @@
 using byte = uint8_t;
 
 // max cells in a map
-constexpr unsigned MAX_SIZE       = 200 * 200;
-constexpr unsigned MAX_LIST_SIZE  = (MAX_SIZE / sizeof(unsigned)) - 1;
+constexpr uint32_t MAX_SIZE       = 200 * 200;
+// max size - 1 byte
+constexpr uint32_t MAX_LIST_SIZE  = (MAX_SIZE - 1) / sizeof(uint32_t);
+
+typedef uint32_t stateId;
 
 // opcodes
 enum Opcode : byte {
@@ -23,14 +26,19 @@ enum Type : byte {
    GAS   = 3
 };
 
+struct IDlist {
+   Type        brushType;
+   stateId    data[MAX_LIST_SIZE];
+};
+
 union Payload {
-   byte     map[MAX_SIZE];
-   unsigned list[MAX_LIST_SIZE];
+   Type     map[MAX_SIZE];
+   IDlist   list;
 };
 
 struct Packet {
    Opcode   opcode;
-   unsigned size;
+   uint32_t size;
    Payload  payload;
 };
 

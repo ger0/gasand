@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <cstdint>
 
 #include <errno.h>
 #include <unistd.h>
@@ -16,8 +17,8 @@
 #include "shared.hpp"
 
 // default values to be set later
-unsigned MAP_WIDTH   = 200;
-unsigned MAP_HEIGHT  = 200;
+uint32_t MAP_WIDTH   = 200;
+uint32_t MAP_HEIGHT  = 200;
 
 constexpr double TICK_RATE = 50;
 
@@ -29,25 +30,23 @@ constexpr double PERIOD =  SEC2USEC / TICK_RATE;
 bool isRunning    = true;
 // server socket
 int servSock;
-
 // descriptors for clients
 std::vector<int> clients;
 
 // map state to send
-Type state[MAX_SIZE] = {};
+Type state[MAX_SIZE]          = {};
+// gas update guard
+bool updatedState[MAX_SIZE]   = {};
 
-void pushToState(unsigned *arr, unsigned &max_iter) {
-   Type type = EMPTY;
+void pushToState(IDlist &list, unsigned &max_iter) {
+   Type type = list.brushType;
+
    for (unsigned i = 0; i < max_iter; i++) {
-      if (i >= MAX_SIZE) {
-         printf("ERROR DURING A PUSH_TO_STATE: pushing invalid index - %u \n", i);
+      if (list.data[i] >= MAX_SIZE) {
+         printf("INVALID INDEX DURING A PUSH_TO_STATE: %u \n", list.data[i]);
+
       } else { 
-         // set type
-         if (i == 0)
-            type = (Type)arr[i];
-         else {
-            state[arr[i]] = type;
-         }
+         state[list.data[i]] = type;
       }
    }
 }
@@ -55,15 +54,18 @@ void pushToState(unsigned *arr, unsigned &max_iter) {
 void readPacket(Packet &packet, int fd) {
    if (packet.opcode == UPDATE) {
       // list of updated cells
-      unsigned max_iter = packet.size / sizeof(unsigned);
+      unsigned max_iter = packet.size / sizeof(stateId);
       pushToState(packet.payload.list, max_iter);
 
    } else if (packet.opcode == TERMINATE) {
       clients.erase(std::remove(clients.begin(), clients.end(), fd), clients.end());
+      close(fd);
+      printf("Client disconnected...\n");
 
    } else if (packet.opcode == CLEAR) {
-      for (unsigned i = 0; i < MAX_SIZE; i++)
+      for (uint32_t i = 0; i < MAX_SIZE; i++) {
          state[i] = EMPTY;
+      }
    }
 }
 
@@ -74,8 +76,8 @@ Packet preparePacket(Opcode opcode) {
       memcpy(packet.payload.map, state, MAX_SIZE);
 
    } else if (opcode == CONFIGURE) {
-      packet.payload.list[0] = MAP_WIDTH;
-      packet.payload.list[1] = MAP_HEIGHT;
+      packet.payload.list.data[0] = MAP_WIDTH;
+      packet.payload.list.data[1] = MAP_HEIGHT;
    }
    return packet;
 }
@@ -88,23 +90,29 @@ inline Type *stateGet(int x, int y) {
    return &state[x + y * (MAP_WIDTH)];
 }
 
+inline bool *stateUpdatedGet(int x, int y) {
+   if (x >= MAP_WIDTH || y >= MAP_HEIGHT ||
+         x < 0 || y < 0) {
+      return nullptr;
+   }
+   return &updatedState[x + y * (MAP_WIDTH)];
+}
+
 void mapStateUpdate() {
    // iterating over entire map
    for (int y = MAP_HEIGHT - 1; y >= 0; y--) {
       for (int x = 0; x < MAP_WIDTH; x++) {
-         Type *cell = stateGet(x, y);
-         if (cell == nullptr) {
-            printf("ERROR DURING UPDATING: WRONG ID\n");
-         }
-
+         Type *cell        = stateGet(x, y);
+         bool *cellUpdated = stateUpdatedGet(x, y);
+         Type *neighbour   = nullptr;
+         
          // update sand gravity
          if (*cell == SAND) {
-
             // choose random direction
             int mov = rand() % 3 - 1;
-            Type *neighbour = stateGet(x, y + 1);
+            neighbour = stateGet(x, y + 1);
 
-            for (unsigned i = 0; i < 2; i++) {
+            for (uint32_t i = 0; i < 2; i++) {
                if (neighbour != nullptr) {
                   neighbour = stateGet(x + (i * mov), y + 1);
 
@@ -114,54 +122,52 @@ void mapStateUpdate() {
                   }
                }
             }
-         }
-         // update gas state TODO: change logic
-         else if (*cell == GAS) {
-
+         } else if (*cell == GAS) {
             // random direction
             int x_ran = rand() % 3 - 1;
             int y_ran = rand() % 3 - 1;
 
-            Type *neighbour = stateGet(x, y - 1);
+            // check the cell above 
+            neighbour = stateGet(x, y - 1);
 
-            if (neighbour != nullptr) {
-               if (*neighbour == SAND) {
-                  Type temp = *neighbour;
+            if (neighbour != nullptr && *neighbour == SAND) {
+               Type temp = *neighbour;
 
-                  *neighbour = *cell;
-                  *cell      = temp;
+               *neighbour = *cell;
+               *cell      = temp;
 
-               } else if (!(*neighbour == WALL && y_ran < 0)) {
-                  neighbour = stateGet(x + x_ran, y + y_ran);
+            // check if a random neighbour is accessible
+            } else {
+               neighbour = stateGet(x + x_ran, y + y_ran);
 
-                  if (neighbour != nullptr && *neighbour == EMPTY) {
+               if (neighbour != nullptr && !(*neighbour == WALL && y_ran < 0)) {
+                  cellUpdated = stateUpdatedGet(x + x_ran, y + y_ran);
+
+                  // check if the neighbour has been updated before
+                  if (*neighbour == EMPTY && *cellUpdated == false) {
                      *neighbour = *cell;
                      *cell = EMPTY; 
+                     *cellUpdated = true;
                   }
                }
             }
          }
       }
    }
+   for (uint32_t i = 0; i < MAX_SIZE; i++) {
+      updatedState[i] = false;
+   }
 }
 
-void handle_sigint(int sig) {
+void closeProgram(int sig) {
    isRunning = false;
-
-   Packet packet = preparePacket(TERMINATE);
-   for (int sock : clients) {
-      write(sock, &packet, sizeof(Packet));
-      close(sock);
-   }
-   printf("Closing server...\n");
-   close(servSock);
 }
 
 int main(int argc, char* argv[]) {
    // check for "--set-size"
    if (argc == 5 && strcmp(sizeFlag, argv[2]) == 0) { 
-      unsigned width    = atoi(argv[3]);
-      unsigned height   = atoi(argv[4]);
+      uint32_t width    = atoi(argv[3]);
+      uint32_t height   = atoi(argv[4]);
 
       if (!(width <= 0  || width > 200 ||
             height <= 0 || height > 200)) {
@@ -177,7 +183,7 @@ int main(int argc, char* argv[]) {
       return -11;
    } 
 
-   signal(SIGINT, handle_sigint);
+   signal(SIGINT, closeProgram);
 
    sockaddr_in localAddress {
       .sin_family = AF_INET,
@@ -245,5 +251,12 @@ int main(int argc, char* argv[]) {
       }
    }
    // clean up 
+   packet = preparePacket(TERMINATE);
+   for (int sock : clients) {
+      write(sock, &packet, sizeof(Packet));
+      close(sock);
+   }
+   printf("Closing the server...\n");
+   close(servSock);
    return 0;
 }

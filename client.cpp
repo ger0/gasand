@@ -1,6 +1,7 @@
 #include <SDL2/SDL.h>
 #include <cstdio>
 #include <ctime>
+#include <cstdint>
 #include <cassert>
 
 #include <fcntl.h>
@@ -14,8 +15,8 @@
 bool isRunning = true;
 
 // default
-unsigned MAP_WIDTH   = 200;
-unsigned MAP_HEIGHT  = 200;
+uint32_t MAP_WIDTH   = 200;
+uint32_t MAP_HEIGHT  = 200;
 
 // default
 unsigned SCREEN_WIDTH  = 800;
@@ -27,18 +28,18 @@ struct {int x = 4; int y = 4;} SCALE;
 int sock;
 
 // mouse brush
-Type brush_state = EMPTY;
+Type brushState = EMPTY;
 bool isMousePressed  = false;
 struct {int x = 0; int y = 0;} mousePos;
 
 // list of updated cells sent to server
-std::vector<unsigned> updatedCells;
+std::vector<stateId> updatedCells;
 
 // map state received from server 
 Type inState[MAX_SIZE] = {EMPTY};
 
-inline unsigned getId(int &x, int &y) {
-   return unsigned(x + y * MAP_WIDTH);
+inline stateId getId(int &x, int &y) {
+   return x + y * MAP_WIDTH;
 }
 
 void readPacket(Packet &packet) {
@@ -50,8 +51,8 @@ void readPacket(Packet &packet) {
       isRunning = false; 
 
    } else if (packet.opcode == CONFIGURE) {
-      MAP_WIDTH   = packet.payload.list[0];
-      MAP_HEIGHT  = packet.payload.list[1];
+      MAP_WIDTH   = packet.payload.list.data[0];
+      MAP_HEIGHT  = packet.payload.list.data[1];
 
       SCALE.x = SCREEN_WIDTH  / MAP_WIDTH;
       SCALE.y = SCREEN_HEIGHT / MAP_HEIGHT;
@@ -63,16 +64,16 @@ Packet preparePacket(Opcode opcode) {
    packet.opcode = opcode;
 
    if (opcode == UPDATE) {
-      packet.payload.list[0] = brush_state;
-      unsigned size = updatedCells.size() * sizeof(unsigned);
+      packet.payload.list.brushType = brushState;
+      uint32_t size = updatedCells.size() * sizeof(uint32_t);
 
       if (size > MAX_SIZE - 1) {
          // saving 4 bytes for a brush
-         memcpy(packet.payload.list + 1, updatedCells.data(), MAX_SIZE - sizeof(unsigned));
+         memcpy(packet.payload.list.data, updatedCells.data(), MAX_SIZE - sizeof(stateId));
          packet.size = MAX_SIZE;
 
       } else {
-         memcpy(packet.payload.list + 1, updatedCells.data(), size);
+         memcpy(packet.payload.list.data, updatedCells.data(), size);
          packet.size = size;
       }
    }
@@ -121,20 +122,20 @@ void handleEvents(SDL_Event *e) {
             
             // W KEY
             if (e->key.keysym.scancode == 0x1A) {
-               brush_state = WALL;
+               brushState = WALL;
             // S KEY
             } else if (e->key.keysym.scancode == 0x16) {
-               brush_state = SAND;
+               brushState = SAND;
             // G KEY
             } else if (e->key.keysym.scancode == 0x0A) {
-               brush_state = GAS;
+               brushState = GAS;
             // SPACEBAR KEY
             } else if (e->key.keysym.scancode == 0x2C) {
                Packet packet = preparePacket(CLEAR);
                write(sock, &packet, sizeof(Packet));
 
             } else {
-               brush_state = EMPTY;
+               brushState = EMPTY;
             }
             break;
 
