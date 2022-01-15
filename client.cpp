@@ -13,6 +13,16 @@
 
 bool isRunning = true;
 
+// default
+unsigned MAP_WIDTH   = 200;
+unsigned MAP_HEIGHT  = 200;
+
+// default
+unsigned SCREEN_WIDTH  = 800;
+unsigned SCREEN_HEIGHT = 800;
+
+struct {int x = 4; int y = 4;} SCALE;
+
 // socket
 int sock;
 
@@ -25,10 +35,10 @@ struct {int x = 0; int y = 0;} mousePos;
 std::vector<unsigned> updatedCells;
 
 // map state received from server 
-Type inState[MAP_WIDTH * MAP_HEIGHT] = {EMPTY};
+Type inState[MAX_SIZE] = {EMPTY};
 
-inline unsigned getId(int x, int y) {
-   return unsigned(x) + unsigned(y * MAP_HEIGHT);
+inline unsigned getId(int &x, int &y) {
+   return unsigned(x + y * MAP_WIDTH);
 }
 
 void readPacket(Packet &packet) {
@@ -38,6 +48,13 @@ void readPacket(Packet &packet) {
    } else if (packet.opcode == TERMINATE) {
       printf("Server closed connection...\n");
       isRunning = false; 
+
+   } else if (packet.opcode == CONFIGURE) {
+      MAP_WIDTH   = packet.payload.list[0];
+      MAP_HEIGHT  = packet.payload.list[1];
+
+      SCALE.x = SCREEN_WIDTH  / MAP_WIDTH;
+      SCALE.y = SCREEN_HEIGHT / MAP_HEIGHT;
    }
 }
 
@@ -89,8 +106,8 @@ void handleEvents(SDL_Event *e) {
          case SDL_MOUSEBUTTONDOWN:
             isMousePressed = true;
          case SDL_MOUSEMOTION:
-            mousePos.x = e->motion.x / SCALE;
-            mousePos.y = e->motion.y / SCALE;
+            mousePos.x = e->motion.x / SCALE.x;
+            mousePos.y = e->motion.y / SCALE.y;
             tryDrawing();
             //printf("Mouse moved to (%d, %d)\n", mousePos.x, mousePos.y);
             break;
@@ -138,7 +155,7 @@ void renderMap(SDL_Window *window, SDL_Renderer *renderer) {
    for (int y = 0; y < MAP_HEIGHT; y++) {
       for (int x = 0; x < MAP_WIDTH; x++) {
          // drawing the cell
-         SDL_Rect rect = {x * SCALE, y * SCALE, SCALE, SCALE};
+         SDL_Rect rect = {x * SCALE.x, y * SCALE.y, SCALE.x, SCALE.y};
          
          SDL_Colour col;
          Type *type = stateGet(x, y);
@@ -202,9 +219,23 @@ struct Scope_Handle {
 };
 
 int main(int argc, char* argv[]) {
-   if (argc != 3) {
+   // checking for size flag
+   if (argc == 6 && strcmp(sizeFlag, argv[3]) == 0) {
+      unsigned width    = atoi(argv[4]);
+      unsigned height   = atoi(argv[4]);
+
+      if (!(width <= 0 || height <= 0) &&
+            (width >= 400 && height >= 400)) {
+         SCREEN_WIDTH   = width;
+         SCREEN_HEIGHT  = width;
+      } else {
+         printf("Both display dimensions must be higher than 400.\n");
+         printf("Setting to default dimensions 800 x 800\n");
+      }
+   } else if (argc != 3) {
       printf("Incorrect usage, please input address and port:\n");
-      printf("%s <address> <port>\n", argv[0]);
+      printf("%s <address> <port>\n\t", argv[0]);
+      printf("or: %s <address> <port> %s <width> <height>\n", argv[0], sizeFlag);
       return -10;
    }
 
@@ -261,8 +292,10 @@ int main(int argc, char* argv[]) {
    }
       
    SDL_Event event;
-   // game loop
+   // packet struct used for communication 
    Packet packet;
+
+   // game loop
    while (isRunning) {
       // handle events
       handleEvents(&event);
