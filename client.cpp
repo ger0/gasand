@@ -5,6 +5,7 @@
 #include <cassert>
 
 #include <fcntl.h>
+#include <errno.h>
 
 #include <unistd.h>
 #include <netdb.h>
@@ -196,6 +197,7 @@ struct Scope_Handle {
       *this = move(rhs);
    }
    ~Scope_Handle() {
+      printf("CALLED DESTRUCTOR!\n");
       reset();
    }
    Scope_Handle& operator=(T* rhs) {
@@ -261,7 +263,6 @@ int main(int argc, char* argv[]) {
 
    Scope_Handle<SDL_Window,   SDL_DestroyWindow>   window;
    Scope_Handle<SDL_Renderer, SDL_DestroyRenderer> renderer;
-   SDL_Surface    *window_surface;
 
    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
       printf("Failed to initialize the SDL2 library\n");
@@ -280,18 +281,12 @@ int main(int argc, char* argv[]) {
       return -4;
    }
 
-   renderer = SDL_CreateRenderer(window, -1, 0);
+   renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
    if (renderer) {
       SDL_SetRenderDrawColor(renderer, 38, 38, 38, 255);
          printf("Created renderer\n");
    }
 
-   window_surface = SDL_GetWindowSurface(window);
-   if (!window_surface) {
-      printf("Failed to create window surface");
-      return -5;
-   }
-      
    SDL_Event event;
    // packet struct used for communication 
    Packet packet;
@@ -306,7 +301,14 @@ int main(int argc, char* argv[]) {
       // try to send updates
       if (updatedCells.size() > 0) { 
          packet = preparePacket(UPDATE);
-         write(sock, &packet, sizeof(Packet));
+         if (send(sock, &packet, sizeof(Packet), MSG_NOSIGNAL) < 0 &&
+               errno == EPIPE) {
+            // handle broken pipe
+            isRunning = false;
+            close(sock);
+            SDL_Quit();
+            return -1;
+         }
          updatedCells.clear();
       }
 
@@ -316,11 +318,11 @@ int main(int argc, char* argv[]) {
       }
 
       renderMap(window, renderer);
-      // todo sync
    }
    // close socket
    packet = preparePacket(TERMINATE);
    write(sock, &packet, sizeof(Packet));
+   close(sock);
    SDL_Quit();
    // clean up 
    return 0;

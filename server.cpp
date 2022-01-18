@@ -51,6 +51,12 @@ void pushToState(IDlist &list, unsigned &max_iter) {
    }
 }
 
+void terminateSocket(int fd) {
+   clients.erase(std::remove(clients.begin(), clients.end(), fd), clients.end());
+   close(fd);
+   printf("Client disconnected...\n");
+}
+
 void readPacket(Packet &packet, int fd) {
    if (packet.opcode == UPDATE) {
       // list of updated cells
@@ -58,9 +64,7 @@ void readPacket(Packet &packet, int fd) {
       pushToState(packet.payload.list, max_iter);
 
    } else if (packet.opcode == TERMINATE) {
-      clients.erase(std::remove(clients.begin(), clients.end(), fd), clients.end());
-      close(fd);
-      printf("Client disconnected...\n");
+      terminateSocket(fd);
 
    } else if (packet.opcode == CLEAR) {
       for (uint32_t i = 0; i < MAX_SIZE; i++) {
@@ -235,10 +239,15 @@ int main(int argc, char* argv[]) {
       }
       mapStateUpdate();
 
-      // sending a state of a map
+      // sending a state of a map for each client
       packet = preparePacket(DISPLAY);
       for (int sock : clients) {
-         write(sock, &packet, sizeof(Packet));
+         if (send(sock, &packet, sizeof(Packet), MSG_NOSIGNAL) < 0
+               && errno == EPIPE) {
+            // remove broken pipes
+            perror("Warning");
+            terminateSocket(sock);
+         }
       }
 
       // tick
