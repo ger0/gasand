@@ -1,6 +1,5 @@
 #include <cstdio>
 #include <cstring>
-#include <ctime>
 #include <cstdint>
 
 #include <errno.h>
@@ -11,6 +10,7 @@
 
 #include <vector>
 #include <algorithm>
+#include <random>
 
 #include <csignal>
 
@@ -26,17 +26,25 @@ constexpr double TICK_RATE = 50;
 constexpr double SEC2USEC = 1'000'000;
 constexpr double PERIOD =  SEC2USEC / TICK_RATE;
 
-// game state
-bool isRunning    = true;
-// server socket
+// socket descriptors
 int servSock;
-// descriptors for clients
 std::vector<int> clients;
 
+// game state
+bool isRunning    = true;
 // map state to send
 Type state[MAX_SIZE]          = {};
-// gas update guard
+// TODO: change, gas update guard
 bool updatedState[MAX_SIZE]   = {};
+
+bool sendPacket(int &sock, Packet &packet) {
+   // handling broken pipes 
+   if (send(sock, &packet, sizeof(Packet), MSG_NOSIGNAL) < 0 &&
+         errno == EPIPE) {
+      return false;
+   }
+   else return true;
+}
 
 void pushToState(IDlist &list, unsigned &max_iter) {
    Type type = list.brushType;
@@ -51,20 +59,20 @@ void pushToState(IDlist &list, unsigned &max_iter) {
    }
 }
 
-void terminateSocket(int fd) {
-   clients.erase(std::remove(clients.begin(), clients.end(), fd), clients.end());
-   close(fd);
+void terminateClient(int sock) {
+   clients.erase(std::remove(clients.begin(), clients.end(), sock), clients.end());
+   close(sock);
    printf("Client disconnected...\n");
 }
 
-void readPacket(Packet &packet, int fd) {
+void readPacket(Packet &packet, int sock) {
    if (packet.opcode == UPDATE) {
       // list of updated cells
       unsigned max_iter = packet.size / sizeof(stateId);
       pushToState(packet.payload.list, max_iter);
 
    } else if (packet.opcode == TERMINATE) {
-      terminateSocket(fd);
+      terminateClient(sock);
 
    } else if (packet.opcode == CLEAR) {
       for (uint32_t i = 0; i < MAX_SIZE; i++) {
@@ -104,6 +112,10 @@ inline bool *stateUpdatedGet(int x, int y) {
 
 void mapStateUpdate() {
    // iterating over entire map
+   std::random_device   randDev;
+   std::mt19937         generator(randDev());
+   std::uniform_int_distribution<int> distr(-1, 1);
+
    for (int y = MAP_HEIGHT - 1; y >= 0; y--) {
       for (int x = 0; x < MAP_WIDTH; x++) {
          Type *cell        = stateGet(x, y);
@@ -113,7 +125,7 @@ void mapStateUpdate() {
          // update sand gravity
          if (*cell == SAND) {
             // choose random direction
-            int mov = rand() % 3 - 1;
+            int mov = distr(generator);
             neighbour = stateGet(x, y + 1);
 
             for (uint32_t i = 0; i < 2; i++) {
@@ -128,8 +140,8 @@ void mapStateUpdate() {
             }
          } else if (*cell == GAS) {
             // random direction
-            int x_ran = rand() % 3 - 1;
-            int y_ran = rand() % 3 - 1;
+            int x_ran = distr(generator);
+            int y_ran = distr(generator);
 
             // check the cell above 
             neighbour = stateGet(x, y - 1);
@@ -184,7 +196,7 @@ int main(int argc, char* argv[]) {
    } else if (argc != 2) {
       printf("Usage: %s <port>\n\t", argv[0]);
       printf("or: %s <port> %s <width> <height>\n", argv[0], sizeFlag);
-      return -11;
+      exit(1);
    } 
 
    signal(SIGINT, closeProgram);
@@ -199,23 +211,19 @@ int main(int argc, char* argv[]) {
 
    int res = bind(servSock, (sockaddr*)&localAddress, sizeof(localAddress));
    if (res) {
-      printf("Bind failed!\n");
-      return -12;
+      perror("Bind failed! ");
+      exit(1);
    }
    listen(servSock, 4);
    
    // no block
    fcntl(servSock, F_SETFL, fcntl(servSock, F_GETFL) | O_NONBLOCK);
 
-   srand(time(NULL));
-      
-   int clientSock;
-
    // game loop
+   int clientSock;
    Packet packet;
    clock_t timePoint = clock();
    double  deltaTime = 0.0;
-
    while (isRunning) {
       timePoint = clock();
 
@@ -224,11 +232,15 @@ int main(int argc, char* argv[]) {
       if (clientSock != -1) {
          fcntl(clientSock, F_SETFL, fcntl(clientSock, F_GETFL) | O_NONBLOCK);
          clients.push_back(clientSock);
+
          // send map dimensions 
          packet = preparePacket(CONFIGURE);
-         write(clientSock, &packet, sizeof(Packet));
-
-         printf("Accepted a new connection\n");
+         if (!sendPacket(clientSock, packet)) {
+            // failure
+            terminateClient(clientSock);
+         } else {
+            printf("Accepted a new connection\n");
+         }
       }
 
       // read from clients
@@ -239,17 +251,14 @@ int main(int argc, char* argv[]) {
       }
       mapStateUpdate();
 
-      // sending a state of a map for each client
+      // sending a state of the map for each client
       packet = preparePacket(DISPLAY);
       for (int sock : clients) {
-         if (send(sock, &packet, sizeof(Packet), MSG_NOSIGNAL) < 0
-               && errno == EPIPE) {
-            // remove broken pipes
-            perror("Warning");
-            terminateSocket(sock);
+         if (!sendPacket(sock, packet)) {
+            printf("One of the clients is unreachable...\n");
+            terminateClient(sock);
          }
       }
-
       // tick
       timePoint = clock() - timePoint;
       deltaTime = PERIOD - (double)timePoint * SEC2USEC / CLOCKS_PER_SEC;
@@ -262,7 +271,7 @@ int main(int argc, char* argv[]) {
    // clean up 
    packet = preparePacket(TERMINATE);
    for (int sock : clients) {
-      write(sock, &packet, sizeof(Packet));
+      sendPacket(sock, packet);
       close(sock);
    }
    printf("Closing the server...\n");
