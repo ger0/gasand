@@ -229,12 +229,12 @@ int main(int argc, char* argv[]) {
    // checking for size flag
    if (argc == 6 && strcmp(sizeFlag, argv[3]) == 0) {
       unsigned width    = atoi(argv[4]);
-      unsigned height   = atoi(argv[4]);
+      unsigned height   = atoi(argv[5]);
 
       if (!(width <= 0 || height <= 0) &&
             (width >= 400 && height >= 400)) {
          SCREEN_WIDTH   = width;
-         SCREEN_HEIGHT  = width;
+         SCREEN_HEIGHT  = height;
       } else {
          printf("Both display dimensions must be higher than 400.\n");
          printf("Setting to default dimensions 800 x 800\n");
