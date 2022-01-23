@@ -20,8 +20,8 @@ uint32_t MAP_WIDTH   = 200;
 uint32_t MAP_HEIGHT  = 200;
 
 // default
-unsigned SCREEN_WIDTH  = 800;
-unsigned SCREEN_HEIGHT = 800;
+uint32_t SCREEN_WIDTH  = 800;
+uint32_t SCREEN_HEIGHT = 800;
 
 // pixels per 1 cell 
 struct {int x = 4; int y = 4;} SCALE;
@@ -153,7 +153,7 @@ void handleEvents(SDL_Event *e) {
    }
 }
 
-inline Type *stateGet(int x, int y) {
+inline Type *stateGet(int &x, int &y) {
    if (x >= MAP_WIDTH || y >= MAP_HEIGHT ||
          x < 0 || y < 0) {
       return nullptr;
@@ -163,12 +163,12 @@ inline Type *stateGet(int x, int y) {
 
 void renderMap(SDL_Window *window, SDL_Renderer *renderer) {
    SDL_RenderClear(renderer);
+   SDL_Colour col;
+   SDL_Rect rect = {0, 0, 1, 1};
    for (int y = 0; y < MAP_HEIGHT; y++) {
       for (int x = 0; x < MAP_WIDTH; x++) {
          // drawing the cell
-         SDL_Rect rect = {x * SCALE.x, y * SCALE.y, SCALE.x, SCALE.y};
-         SDL_Colour col;
-
+         rect = {x * SCALE.x, y * SCALE.y, SCALE.x, SCALE.y};
          switch (*stateGet(x, y)) {
             case EMPTY:
                col = SDL_Colour{0, 0, 0, 255};

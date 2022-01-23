@@ -59,7 +59,22 @@ void pushToState(IDlist &list, unsigned &max_iter) {
    }
 }
 
+Packet preparePacket(Opcode opcode) {
+   Packet packet;
+   packet.opcode = opcode;
+   if (opcode == DISPLAY) {
+      memcpy(packet.payload.map, state, MAX_SIZE);
+
+   } else if (opcode == CONFIGURE) {
+      packet.payload.list.data[0] = MAP_WIDTH;
+      packet.payload.list.data[1] = MAP_HEIGHT;
+   }
+   return packet;
+}
+
 void terminateClient(int sock) {
+   Packet packet = preparePacket(TERMINATE);
+   sendPacket(sock, packet);
    clients.erase(std::remove(clients.begin(), clients.end(), sock), clients.end());
    close(sock);
    printf("Client disconnected...\n");
@@ -79,19 +94,6 @@ void readPacket(Packet &packet, int sock) {
          state[i] = EMPTY;
       }
    }
-}
-
-Packet preparePacket(Opcode opcode) {
-   Packet packet;
-   packet.opcode = opcode;
-   if (opcode == DISPLAY) {
-      memcpy(packet.payload.map, state, MAX_SIZE);
-
-   } else if (opcode == CONFIGURE) {
-      packet.payload.list.data[0] = MAP_WIDTH;
-      packet.payload.list.data[1] = MAP_HEIGHT;
-   }
-   return packet;
 }
 
 inline Type *stateGet(int x, int y) {
