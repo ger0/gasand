@@ -63,11 +63,14 @@ void readPacket(Packet &packet) {
       isRunning = false; 
 
    } else if (packet.opcode == CONFIGURE) {
-      MAP_WIDTH   = packet.payload.list.data[0];
-      MAP_HEIGHT  = packet.payload.list.data[1];
+      if (packet.payload.list.data[0] != 0 &&
+            packet.payload.list.data[1] != 0) {
+         MAP_WIDTH   = packet.payload.list.data[0];
+         MAP_HEIGHT  = packet.payload.list.data[1];
 
-      SCALE.x = SCREEN_WIDTH  / MAP_WIDTH;
-      SCALE.y = SCREEN_HEIGHT / MAP_HEIGHT;
+         SCALE.x = SCREEN_WIDTH  / MAP_WIDTH;
+         SCALE.y = SCREEN_HEIGHT / MAP_HEIGHT;
+      }
    }
 }
 
