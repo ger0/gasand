@@ -4,11 +4,12 @@
 using byte = uint8_t;
 
 // max cells in a map
-constexpr uint32_t MAX_SIZE       = 200 * 200;
+constexpr uint16_t MAX_SIZE       = 216 * 216;
+constexpr uint16_t PACKET_SIZE    = 2048;
 // max size - 1 byte
-constexpr uint32_t MAX_LIST_SIZE  = (MAX_SIZE - 1) / sizeof(uint32_t);
+constexpr uint16_t MAX_LIST_SIZE  = (PACKET_SIZE - 1) / sizeof(uint16_t);
 
-typedef uint32_t stateId;
+typedef uint16_t stateId;
 
 // opcodes
 enum Opcode : byte {
@@ -16,7 +17,8 @@ enum Opcode : byte {
    TERMINATE   = 10,
    UPDATE      = 20,
    DISPLAY     = 30,
-   CLEAR       = 40
+   CLEAR       = 40,
+   FULL_SYNC   = 90
 };
 
 enum Type : byte {
@@ -31,14 +33,19 @@ struct IDlist {
    stateId    data[MAX_LIST_SIZE];
 };
 
+struct UpdatedCell {
+   stateId  id;
+   Type     type;
+};
+
 union Payload {
-   Type     map[MAX_SIZE];
-   IDlist   list;
+   UpdatedCell map[PACKET_SIZE];
+   IDlist      list;
 };
 
 struct Packet {
    Opcode   opcode;
-   uint32_t size;
+   uint16_t size;
    Payload  payload;
 };
 

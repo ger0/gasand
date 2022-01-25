@@ -17,8 +17,8 @@
 #include "shared.hpp"
 
 // default values to be set later
-uint32_t MAP_WIDTH   = 200;
-uint32_t MAP_HEIGHT  = 200;
+uint16_t MAP_WIDTH   = 200;
+uint16_t MAP_HEIGHT  = 200;
 
 constexpr double TICK_RATE = 50;
 
@@ -30,10 +30,13 @@ constexpr double PERIOD =  SEC2USEC / TICK_RATE;
 int servSock;
 std::vector<int> clients;
 
+std::vector<UpdatedCell> deltaState; 
+
 // game state
 bool isRunning    = true;
 // map state to send
 Type state[MAX_SIZE]          = {};
+Type prevState[MAX_SIZE]      = {};
 // TODO: change, gas update guard
 bool updatedState[MAX_SIZE]   = {};
 
@@ -62,8 +65,19 @@ void pushToState(IDlist &list, unsigned &max_iter) {
 Packet preparePacket(Opcode opcode) {
    Packet packet;
    packet.opcode = opcode;
-   if (opcode == DISPLAY) {
+   if (opcode == FULL_SYNC) {
       memcpy(packet.payload.map, state, MAX_SIZE);
+
+   } else if (opcode == DISPLAY) {
+      uint16_t size = deltaState.size() * sizeof(UpdatedCell);
+      packet.size = size;
+
+      if (size > PACKET_SIZE) {
+         memcpy(packet.payload.map, deltaState.data(), PACKET_SIZE);
+
+      } else {
+         memcpy(packet.payload.map, deltaState.data(), size);
+      }
 
    } else if (opcode == CONFIGURE) {
       packet.payload.list.data[0] = MAP_WIDTH;
@@ -90,7 +104,7 @@ void readPacket(Packet &packet, int sock) {
       terminateClient(sock);
 
    } else if (packet.opcode == CLEAR) {
-      for (uint32_t i = 0; i < MAX_SIZE; i++) {
+      for (uint16_t i = 0; i < MAX_SIZE; i++) {
          state[i] = EMPTY;
       }
    }
@@ -104,12 +118,27 @@ inline Type *stateGet(int x, int y) {
    return &state[x + y * (MAP_WIDTH)];
 }
 
+inline uint16_t getId(int x, int y) {
+   return x + y * (MAP_WIDTH);
+}
+
 inline bool *stateUpdatedGet(int x, int y) {
    if (x >= MAP_WIDTH || y >= MAP_HEIGHT ||
          x < 0 || y < 0) {
       return nullptr;
    }
    return &updatedState[x + y * (MAP_WIDTH)];
+}
+
+void calculateDelta() {
+   for (uint16_t id = 0; id < MAX_SIZE; id++) {
+      if (state[id] != prevState[id]) {
+         deltaState.push_back(UpdatedCell{
+               .id = id, 
+               .type = state[id]
+               });
+      }
+   }
 }
 
 void mapStateUpdate() {
@@ -130,7 +159,7 @@ void mapStateUpdate() {
             int mov = distr(generator);
             neighbour = stateGet(x, y + 1);
 
-            for (uint32_t i = 0; i < 2; i++) {
+            for (int i = 0; i < 2; i++) {
                if (neighbour != nullptr) {
                   neighbour = stateGet(x + (i * mov), y + 1);
 
@@ -184,8 +213,8 @@ void closeProgram(int sig) {
 int main(int argc, char* argv[]) {
    // check for "--set-size"
    if (argc == 5 && strcmp(sizeFlag, argv[2]) == 0) { 
-      uint32_t width    = atoi(argv[3]);
-      uint32_t height   = atoi(argv[4]);
+      uint16_t width    = atoi(argv[3]);
+      uint16_t height   = atoi(argv[4]);
 
       if (!(width <= 0  || width > 200 ||
             height <= 0 || height > 200)) {
@@ -241,6 +270,11 @@ int main(int argc, char* argv[]) {
             // failure
             terminateClient(clientSock);
          } else {
+            // send entire map
+            if (send(clientSock, state, sizeof(Type) * MAX_SIZE, MSG_NOSIGNAL) < 0 
+               && errno == EPIPE) {
+               terminateClient(clientSock);
+            }
             printf("Accepted a new connection\n");
          }
       }
@@ -252,6 +286,8 @@ int main(int argc, char* argv[]) {
          }
       }
       mapStateUpdate();
+      // which cells have changed since last update
+      calculateDelta();
 
       // sending a state of the map for each client
       packet = preparePacket(DISPLAY);
@@ -261,6 +297,8 @@ int main(int argc, char* argv[]) {
             terminateClient(sock);
          }
       }
+      deltaState.clear();
+      memcpy(prevState, state, MAX_SIZE);
       // tick
       timePoint = clock() - timePoint;
       deltaTime = PERIOD - (double)timePoint * SEC2USEC / CLOCKS_PER_SEC;

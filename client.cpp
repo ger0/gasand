@@ -32,13 +32,13 @@ int sock;
 // mouse brush
 Type brushState      = EMPTY;
 bool isMousePressed  = false;
-struct {int x = 0; int y = 0;} mousePos;
+struct {int16_t x = 0; int16_t y = 0;} mousePos;
 
 // list of updated cells to be sent to server
 std::vector<stateId> updatedCells;
 
 // map state received from server 
-Type inState[MAX_SIZE] = {EMPTY};
+Type inState[MAX_SIZE] = {};
 
 // close the program when a pipe has been broken
 bool sendRequest(Packet &packet) {
@@ -53,10 +53,24 @@ bool sendRequest(Packet &packet) {
 inline stateId getId(int &x, int &y) {
    return x + y * MAP_WIDTH;
 }
+void updateState(UpdatedCell *cells, uint16_t size) {
+   printf("updates: %u\n", size);
+   for (uint16_t i = 0; i < size; i++) {
+      stateId  &id    = cells[i].id;
+      Type     &type  = cells[i].type;
+      if (id > MAX_SIZE) {
+         printf("SOMETHING WENT WRONG!\n");
+      } else {
+         inState[id] = type;
+      }
+   }
+}
 
 void readPacket(Packet &packet) {
    if (packet.opcode == DISPLAY) {
-      memcpy(inState, packet.payload.map, MAX_SIZE);
+      //memcpy(inState, packet.payload.map, MAX_SIZE);
+      uint16_t size = packet.size / sizeof(UpdatedCell);
+      updateState(packet.payload.map, size);
 
    } else if (packet.opcode == TERMINATE) {
       printf("Server closed connection...\n");
@@ -80,7 +94,7 @@ Packet preparePacket(Opcode opcode) {
 
    if (opcode == UPDATE) {
       packet.payload.list.brushType = brushState;
-      uint32_t size = updatedCells.size() * sizeof(uint32_t);
+      uint16_t size = updatedCells.size() * sizeof(uint16_t);
 
       if (size > MAX_SIZE - 1) {
          // saving 4 bytes for a brush
@@ -95,7 +109,7 @@ Packet preparePacket(Opcode opcode) {
    return packet;
 }
 
-void statePutCell(int &x, int &y) {
+void statePutCell(int x, int y) {
    if (x >= 0 && y >= 0 &&
          x < MAP_WIDTH && y < MAP_HEIGHT) {
       updatedCells.push_back(getId(x, y));
@@ -104,11 +118,7 @@ void statePutCell(int &x, int &y) {
 
 void tryDrawing() {
    if (isMousePressed) {
-      for (int x = mousePos.x - 1; x <= mousePos.x; x++) {
-         for (int y = mousePos.y - 1; y <= mousePos.y; y++) {
-            statePutCell(x, y);
-         }
-      }
+      statePutCell(mousePos.x, mousePos.y);
    }
 }
 
@@ -264,6 +274,12 @@ int main(int argc, char* argv[]) {
       perror("Failed to connect");
       exit(1);
    }
+
+   // packet struct used for communication 
+   Packet packet;
+   read(sock, &packet, sizeof(Packet));
+   readPacket(packet);
+   read(sock, inState, MAX_SIZE);
    fcntl(sock, F_SETFL, fcntl(sock, F_GETFL) | O_NONBLOCK);
 
    freeaddrinfo(resolved);
@@ -288,15 +304,12 @@ int main(int argc, char* argv[]) {
       exit(1);
    }
 
-   renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+   renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_PRESENTVSYNC);
    if (!renderer) {
       fprintf(stderr, "Failed to create renderer\n");
       exit(1);
    }
    SDL_Event event;
-
-   // packet struct used for communication 
-   Packet packet;
 
    // game loop
    while (isRunning) {
@@ -313,8 +326,9 @@ int main(int argc, char* argv[]) {
          updatedCells.clear();
       }
       // read a new state
-      while (read(sock, &packet, sizeof(Packet)) > 0) {
-         readPacket(packet);
+      Packet readState;
+      while (read(sock, &readState, sizeof(Packet)) > 0) {
+         readPacket(readState);
       }
       renderMap(window, renderer);
    }
