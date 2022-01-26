@@ -26,6 +26,9 @@ constexpr double TICK_RATE = 50;
 constexpr double SEC2USEC = 1'000'000;
 constexpr double PERIOD =  SEC2USEC / TICK_RATE;
 
+// need to send the rest of the delta
+bool packetFragmented = false; 
+
 // socket descriptors
 int servSock;
 std::vector<int> clients;
@@ -72,11 +75,16 @@ Packet preparePacket(Opcode opcode) {
       uint16_t size = deltaState.size() * sizeof(UpdatedCell);
       packet.size = size;
 
-      if (size > PACKET_SIZE) {
-         memcpy(packet.payload.map, deltaState.data(), PACKET_SIZE);
+      if (size > PACKET_SIZE * sizeof(UpdatedCell)) {
+         memcpy(packet.payload.map, deltaState.data(), PACKET_SIZE * sizeof(UpdatedCell));
+         packet.size = PACKET_SIZE * sizeof(UpdatedCell);
+         packetFragmented = true;
+         // make it shorter
+         deltaState.erase(deltaState.begin(), deltaState.begin() + PACKET_SIZE);
 
       } else {
          memcpy(packet.payload.map, deltaState.data(), size);
+         packetFragmented = false;
       }
 
    } else if (opcode == CONFIGURE) {
@@ -290,14 +298,18 @@ int main(int argc, char* argv[]) {
       calculateDelta();
 
       // sending a state of the map for each client
-      packet = preparePacket(DISPLAY);
-      for (int sock : clients) {
-         if (!sendPacket(sock, packet)) {
-            printf("One of the clients is unreachable...\n");
-            terminateClient(sock);
-         }
+      if (deltaState.size() > 0) {
+         do {
+            packet = preparePacket(DISPLAY);
+            for (int sock : clients) {
+               if (!sendPacket(sock, packet)) {
+                  printf("One of the clients is unreachable...\n");
+                  terminateClient(sock);
+               }
+            }
+         } while (packetFragmented);
+         deltaState.clear();
       }
-      deltaState.clear();
       memcpy(prevState, state, MAX_SIZE);
       // tick
       timePoint = clock() - timePoint;
