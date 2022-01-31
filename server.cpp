@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <fcntl.h>
 
@@ -40,11 +41,20 @@ bool updatedState[MAX_SIZE]   = {};
 
 bool sendPacket(int &sock, Packet &packet) {
    // handling broken pipes 
-   if (send(sock, &packet, sizeof(Packet), MSG_NOSIGNAL) < 0 &&
-         errno == EPIPE) {
+   int res = send(sock, &packet, sizeof(Packet), MSG_NOSIGNAL);
+   if (res < 0 && errno == EPIPE) {
       return false;
+   } else if (res < sizeof(Packet)) {
+      int flag = 1; 
+      setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (char *)&flag, sizeof(int));
+      flag = 0; 
+      if (send(sock, &packet, sizeof(Packet), MSG_NOSIGNAL) < 0 &&
+            errno == EPIPE) {
+         return false;
+      }
+      setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (char *)&flag, sizeof(int));
    }
-   else return true;
+   return true;
 }
 
 void pushToState(IDlist &list, unsigned &max_iter, int sock) {
