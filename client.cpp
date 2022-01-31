@@ -143,6 +143,11 @@ void handleEvents(SDL_Event *e) {
             // G KEY
             } else if (e->key.keysym.scancode == 0x0A) {
                brushState = GAS;
+            // P KEY - pause 
+            } else if (e->key.keysym.scancode == 0x13) {
+               Packet packet = preparePacket(PAUSE);
+               // try to send updates if possible
+               sendRequest(packet);
             // SPACEBAR KEY 
             } else if (e->key.keysym.scancode == 0x2C) {
                Packet packet = preparePacket(CLEAR);
@@ -166,13 +171,14 @@ inline Type *stateGet(int &x, int &y) {
 
 void renderMap(SDL_Window *window, SDL_Renderer *renderer) {
    SDL_RenderClear(renderer);
-   SDL_Colour col;
-   SDL_Rect rect = {0, 0, 1, 1};
    for (int y = 0; y < MAP_HEIGHT; y++) {
       for (int x = 0; x < MAP_WIDTH; x++) {
          // drawing the cell
+         SDL_Rect rect = {0, 0, 0, 0};
+         SDL_Colour col;
          rect = {x * SCALE.x, y * SCALE.y, SCALE.x, SCALE.y};
-         switch (*stateGet(x, y)) {
+         Type *cell = stateGet(x, y);
+         switch (*cell) {
             case EMPTY:
                col = SDL_Colour{0, 0, 0, 255};
                break;
@@ -184,6 +190,15 @@ void renderMap(SDL_Window *window, SDL_Renderer *renderer) {
                break;
             case GAS:
                col = SDL_Colour{50, 20, 100, 255};
+               break;
+            default:
+               // custom gas colour
+               col = SDL_Colour{50, 20, 100, 255};
+               if (*cell % 2) {
+                  col.b += 25 * ((*cell - 3) % 6);
+               } else {
+                  col.r += 25 * ((*cell - 3) % 8);
+               }
                break;
          }
          SDL_SetRenderDrawColor(renderer, col.r, col.g, col.b, col.a);

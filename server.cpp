@@ -32,6 +32,7 @@ std::vector<int> clients;
 
 // game state
 bool isRunning    = true;
+bool isPaused     = false;
 // map state to send
 Type state[MAX_SIZE]          = {};
 // TODO: change, gas update guard
@@ -46,8 +47,11 @@ bool sendPacket(int &sock, Packet &packet) {
    else return true;
 }
 
-void pushToState(IDlist &list, unsigned &max_iter) {
+void pushToState(IDlist &list, unsigned &max_iter, int sock) {
    Type type = list.brushType;
+   if (type == GAS) {
+      type = Type(GAS + sock % 250);
+   }
 
    for (unsigned i = 0; i < max_iter; i++) {
       if (list.data[i] >= MAX_SIZE) {
@@ -84,10 +88,13 @@ void readPacket(Packet &packet, int sock) {
    if (packet.opcode == UPDATE) {
       // list of updated cells
       unsigned max_iter = packet.size / sizeof(stateId);
-      pushToState(packet.payload.list, max_iter);
+      pushToState(packet.payload.list, max_iter, sock);
 
    } else if (packet.opcode == TERMINATE) {
       terminateClient(sock);
+
+   } else if (packet.opcode == PAUSE) {
+      isPaused = !isPaused;
 
    } else if (packet.opcode == CLEAR) {
       for (uint32_t i = 0; i < MAX_SIZE; i++) {
@@ -140,7 +147,7 @@ void mapStateUpdate() {
                   }
                }
             }
-         } else if (*cell == GAS) {
+         } else if (*cell >= GAS) {
             // random direction
             int x_ran = distr(generator);
             int y_ran = distr(generator);
@@ -251,7 +258,9 @@ int main(int argc, char* argv[]) {
             readPacket(packet, sock);
          }
       }
-      mapStateUpdate();
+      if (!isPaused) {
+         mapStateUpdate();
+      }
 
       // sending a state of the map for each client
       packet = preparePacket(DISPLAY);

@@ -16,7 +16,8 @@ enum Opcode : byte {
    TERMINATE   = 10,
    UPDATE      = 20,
    DISPLAY     = 30,
-   CLEAR       = 40
+   CLEAR       = 40,
+   PAUSE       = 100
 };
 
 enum Type : byte {
